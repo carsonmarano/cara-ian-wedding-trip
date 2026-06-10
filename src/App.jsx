@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, createContext, useContext } from "react";
+import { setDoc, onSnapshot } from "firebase/firestore";
+import { TRIP_DOC } from "./firebase";
 
 // ─── STATIC ACCENT COLOURS (destination identity + gold — never change) ───────
 const C = {
@@ -359,17 +361,11 @@ function parseTime(t) {
 }
 
 // ─── STORAGE HELPERS ──────────────────────────────────────────────────────────
-const STORAGE_KEY = "eu-trip-2026";
-const DARK_KEY    = "eu-trip-dark";
+const DARK_KEY = "eu-trip-dark";
+const EMPTY    = { edits: {}, customs: {}, originals: {}, hidden: [] };
 
-async function loadData() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : { edits: {}, customs: {}, originals: {} };
-  } catch { return { edits: {}, customs: {}, originals: {} }; }
-}
 async function saveData(data) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+  try { await setDoc(TRIP_DOC, data); } catch {}
 }
 function loadDarkMode() {
   try { return localStorage.getItem(DARK_KEY) === "true"; } catch { return false; }
@@ -623,17 +619,20 @@ function AddActivityModal({ sections, onSave, onClose }) {
 }
 
 // ─── EDIT ITEM MODAL ──────────────────────────────────────────────────────────
-function EditItemModal({ item, onSave, onReset, onClose }) {
+function EditItemModal({ item, onSave, onReset, onDelete, onClose }) {
   const T = useT();
-  const [time,  setTime]  = useState(item.time  || "");
-  const [title, setTitle] = useState(item.title || "");
-  const [desc,  setDesc]  = useState(item.desc  || "");
-  const [cost,  setCost]  = useState(item.cost  || "");
+  const [time,          setTime]          = useState(item.time  || "");
+  const [title,         setTitle]         = useState(item.title || "");
+  const [desc,          setDesc]          = useState(item.desc  || "");
+  const [cost,          setCost]          = useState(item.cost  || "");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   function handleSave() {
     if (!title.trim()) return;
     onSave({ ...item, time: time.trim(), title: title.trim(), desc: desc.trim(), cost: cost.trim(), edited: true });
   }
+
+  const deleteLabel = item.custom ? "Delete" : "Hide";
 
   return (
     <Modal title="✏️ Edit Activity" onClose={onClose}>
@@ -647,9 +646,44 @@ function EditItemModal({ item, onSave, onReset, onClose }) {
           {!item.custom && <button onClick={onReset} style={{ background:"none", border:"none", color:T.restoreLink, cursor:"pointer", textDecoration:"underline", fontSize:12, padding:0, fontFamily:"inherit" }}>Restore original</button>}
         </div>
       )}
-      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:4 }}>
-        <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn onClick={handleSave} variant="primary">Save Changes</Btn>
+      <div style={{ display:"flex", gap:8, justifyContent:"space-between", alignItems:"center", marginTop:4 }}>
+        {/* Delete / Hide — with inline confirmation */}
+        {confirmDelete ? (
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ fontSize:12, color:T.warningText }}>{item.custom ? "Delete forever?" : "Hide from itinerary?"}</span>
+            <Btn variant="danger" small onClick={() => onDelete(item)}>Yes, {deleteLabel}</Btn>
+            <Btn variant="ghost" small onClick={() => setConfirmDelete(false)}>No</Btn>
+          </div>
+        ) : (
+          <Btn variant="danger" small onClick={() => setConfirmDelete(true)}>🗑 {deleteLabel}</Btn>
+        )}
+        <div style={{ display:"flex", gap:8 }}>
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+          <Btn onClick={handleSave} variant="primary">Save Changes</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── RESTORE HIDDEN ITEMS MODAL ───────────────────────────────────────────────
+function RestoreModal({ items, onRestore, onClose }) {
+  const T = useT();
+  return (
+    <Modal title="🔁 Restore Hidden Items" onClose={onClose}>
+      {items.length === 0 ? (
+        <p style={{ color:T.inkMuted, fontSize:13, margin:0 }}>Nothing hidden.</p>
+      ) : items.map(item => (
+        <div key={item.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:`1px solid ${T.creamBorder}` }}>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:11, color:T.inkFaint, marginBottom:2 }}>{item._section} · {item._day}</div>
+            <div style={{ fontSize:13, color:T.ink, fontWeight:500, lineHeight:1.3 }}>{item.title}</div>
+          </div>
+          <Btn variant="ghost" small onClick={() => onRestore(item.id)}>Restore</Btn>
+        </div>
+      ))}
+      <div style={{ display:"flex", justifyContent:"flex-end", marginTop:16 }}>
+        <Btn variant="ghost" onClick={onClose}>Close</Btn>
       </div>
     </Modal>
   );
@@ -757,6 +791,7 @@ export default function TravelGuide() {
   const [saving,         setSaving]         = useState(false);
   const [wengenActivity, setWengenActivity] = useState("jungfraujoch");
   const [darkMode,       setDarkMode]       = useState(loadDarkMode);
+  const [showRestore,    setShowRestore]    = useState(false);
 
   const T = THEMES[darkMode ? "dark" : "light"];
 
@@ -771,7 +806,12 @@ export default function TravelGuide() {
   const currentSection = SECTIONS.find(s => s.id === activeSection);
   const forecast = useSectionForecast(currentSection);
 
-  useEffect(() => { loadData().then(setData); }, []);
+  useEffect(() => {
+    const unsub = onSnapshot(TRIP_DOC, snap => {
+      setData(snap.exists() ? snap.data() : EMPTY);
+    }, () => setData(EMPTY));
+    return unsub;
+  }, []);
 
   async function persist(newData) {
     setSaving(true);
@@ -780,11 +820,14 @@ export default function TravelGuide() {
   }
 
   function mergeItems(items, timelineId) {
-    const merged = items.map(item => {
-      const edit = data.edits[item.id];
-      return edit ? { ...item, ...edit, edited: true } : item;
-    });
-    const customs = data.customs[timelineId] || [];
+    const hiddenSet = new Set(data.hidden || []);
+    const merged = items
+      .filter(item => !hiddenSet.has(item.id))
+      .map(item => {
+        const edit = data.edits[item.id];
+        return edit ? { ...item, ...edit, edited: true } : item;
+      });
+    const customs = (data.customs[timelineId] || []).filter(item => !hiddenSet.has(item.id));
     return [...merged, ...customs].sort((a, b) => parseTime(a.time) - parseTime(b.time));
   }
 
@@ -843,6 +886,54 @@ export default function TravelGuide() {
     setData(next);
     await persist(next);
     setEditItem(null);
+  }
+
+  async function handleDelete(item) {
+    let next;
+    if (item.custom) {
+      const newCustoms = { ...data.customs };
+      for (const dayId in newCustoms) {
+        newCustoms[dayId] = newCustoms[dayId].filter(i => i.id !== item.id);
+      }
+      next = { ...data, customs: newCustoms };
+    } else {
+      // Original items are hidden (stored) so they can be restored later
+      const hidden = [...new Set([...(data.hidden || []), item.id])];
+      const edits = { ...data.edits };
+      delete edits[item.id];
+      const originals = { ...data.originals };
+      delete originals[item.id];
+      next = { ...data, hidden, edits, originals };
+    }
+    setData(next);
+    await persist(next);
+    setEditItem(null);
+  }
+
+  async function handleRestoreHidden(itemId) {
+    const hidden = (data.hidden || []).filter(id => id !== itemId);
+    const next = { ...data, hidden };
+    setData(next);
+    await persist(next);
+  }
+
+  function getHiddenItems() {
+    const hiddenSet = new Set(data.hidden || []);
+    if (hiddenSet.size === 0) return [];
+    const found = [];
+    for (const section of SECTIONS) {
+      for (const day of section.days) {
+        const scan = items => items.forEach(item => {
+          if (hiddenSet.has(item.id)) found.push({ ...item, _section: section.label, _day: day.badge });
+        });
+        if (day.items) scan(day.items);
+        if (day.scenarios) day.scenarios.forEach(sc => scan(sc.items));
+        if (day.leadItems) scan(day.leadItems);
+        if (day.trailItems) scan(day.trailItems);
+        if (day.activityOptions) day.activityOptions.forEach(o => scan(o.items));
+      }
+    }
+    return found;
   }
 
   return (
@@ -922,6 +1013,11 @@ export default function TravelGuide() {
           {/* ── FAB ── */}
           <div style={{ position:"fixed", bottom:24, right:24, zIndex:100, display:"flex", flexDirection:"column", alignItems:"flex-end", gap:8 }}>
             {saving && <div style={{ background:T.savingBg, color:"#fff", fontSize:11, borderRadius:20, padding:"4px 12px" }}>Saving…</div>}
+            {(data.hidden || []).length > 0 && (
+              <button onClick={() => setShowRestore(true)} style={{ background:T.cardBg, color:T.inkMuted, border:`1px solid ${T.creamBorder}`, borderRadius:20, padding:"7px 14px", fontSize:12, cursor:"pointer", fontFamily:"inherit" }}>
+                🔁 {data.hidden.length} hidden
+              </button>
+            )}
             <button onClick={() => setShowAdd(true)} style={{ background:C.gold, color:"#fff", border:"none", borderRadius:28, padding:"13px 20px", fontSize:14, fontWeight:600, cursor:"pointer", boxShadow:"0 4px 16px rgba(201,168,76,0.4)", display:"flex", alignItems:"center", gap:8, fontFamily:"inherit" }}>
               <span style={{ fontSize:18, lineHeight:1 }}>＋</span> Add Activity
             </button>
@@ -934,7 +1030,15 @@ export default function TravelGuide() {
               item={editItem}
               onSave={handleEditSave}
               onReset={() => handleRestore(editItem)}
+              onDelete={handleDelete}
               onClose={() => setEditItem(null)}
+            />
+          )}
+          {showRestore && (
+            <RestoreModal
+              items={getHiddenItems()}
+              onRestore={handleRestoreHidden}
+              onClose={() => setShowRestore(false)}
             />
           )}
         </div>
