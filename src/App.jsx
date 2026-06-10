@@ -1,16 +1,42 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, createContext, useContext } from "react";
 
-// ─── COLOUR TOKENS ───────────────────────────────────────────────────────────
+// ─── STATIC ACCENT COLOURS (destination identity + gold — never change) ───────
 const C = {
-  gold: "#C9A84C", goldLight: "#F0DFA0",
-  ink: "#1A1A1A", inkMuted: "#5A5A5A", inkFaint: "#9A9A9A",
-  cream: "#FAFAF7", creamBorder: "#E8E5DC",
+  gold: "#C9A84C",
   milan: "#B04A2A", como: "#2A6B8A", wengen: "#2A5C3A", nice: "#7B3FA0",
-  badge: "#F5F2EC",
-  custom: "#1A6B8A",
 };
 
-const DEST_COLOR = { milan: C.milan, como: C.como, wengen: C.wengen, nice: C.nice, transit: C.wengen, departure: "#444" };
+// ─── THEME PALETTES ───────────────────────────────────────────────────────────
+const THEMES = {
+  light: {
+    ink: "#1A1A1A",   inkMuted: "#5A5A5A",   inkFaint: "#9A9A9A",
+    cream: "#FAFAF7", creamBorder: "#E8E5DC",
+    badge: "#F5F2EC", cardBg: "#fff", navBg: "#fff",
+    modalBg: "#fff",  inputBg: "#fafaf8",
+    customBg: "#EEF7FF",  customBorder: "#B8D8F5",  customLabel: "#1A5FA0",
+    editedBg: "#FFFBF0",  editedBorder: "#EDD98A",  editedLabel: "#8A5A00",
+    overlayBg: "rgba(0,0,0,0.45)",  savingBg: "rgba(0,0,0,0.7)",
+    warningBg: "#FFF5F0", warningBorder: "#FAAB78", warningText: "#7A2800",
+    restoreLink: "#B04A2A", heroBg: "#1A1A1A",
+    btnSecBg: "#eee", dotBg: "#fff",
+  },
+  dark: {
+    ink: "#E4E1DA",   inkMuted: "#9896A0",   inkFaint: "#5C5A64",
+    cream: "#131318", creamBorder: "#28283A",
+    badge: "#1E1E2C", cardBg: "#1C1C2A", navBg: "#18181F",
+    modalBg: "#1C1C2A", inputBg: "#141420",
+    customBg: "#071525",  customBorder: "#163860",  customLabel: "#4E90CC",
+    editedBg: "#181200",  editedBorder: "#483C00",  editedLabel: "#C8A038",
+    overlayBg: "rgba(0,0,0,0.65)",  savingBg: "rgba(255,255,255,0.12)",
+    warningBg: "#1A0800", warningBorder: "#582800", warningText: "#D49070",
+    restoreLink: "#D06858", heroBg: "#0C0C14",
+    btnSecBg: "#28283A", dotBg: "#1C1C2A",
+  },
+};
+
+// ─── THEME CONTEXT ─────────────────────────────────────────────────────────────
+const ThemeCtx = createContext(null);
+const useT = () => useContext(ThemeCtx).T;
 
 // ─── STATIC ITINERARY DATA ────────────────────────────────────────────────────
 const SECTIONS = [
@@ -144,7 +170,6 @@ const SECTIONS = [
       {
         id: "wengen-jun17", date: "2026-06-17", badge: "Jun 17", title: "Wednesday — Main Mountain Day",
         subtitle: "Shared bookends · Choose the main activity below (3 options)",
-        // Items shown before and after the toggleable middle activity slot.
         leadItems: [
           { id: "w-wed-am", time: "7:00 AM", title: "Breakfast & Morning Start", desc: "Breakfast at the accommodation. Pack layers and sunglasses for the mountains — conditions change fast at altitude.", primary: false },
         ],
@@ -152,7 +177,6 @@ const SECTIONS = [
           { id: "w7", time: "4:00 PM", title: "Tanne Bar — Post-Mountain Beers", desc: "Wengen institution. Owner Ronald is 'a brilliant host' per long-term regulars.", primary: false, cost: "~CHF 8–12 / drink" },
           { id: "w8", time: "7:00 PM", title: "🕯️ Dinner: Restaurant Eiger or Allmend", desc: "Eiger: Swiss fondue/raclette, sunny terrace. Walk-in.\nAllmend: Valley panorama, large terrace, casual. Walk-in.", primary: false, cost: "€€ (~CHF 30–45 pp)" },
         ],
-        // The toggleable main activity. `key` ties Wed → Thu auto-matching.
         activityLabel: "Main Activity — choose one",
         activityOptions: [
           {
@@ -195,7 +219,6 @@ const SECTIONS = [
           { id: "w14", time: "9:30 PM", title: "🌙 Eiger Alpenglow + Tanne Bar Last Night", desc: "June 18 sunset ~9:30 PM. The Eiger turns pink — watch from anywhere in the village. Then Tanne Bar for a final nightcap.", primary: false, cost: "~CHF 8–12 / drink" },
         ],
         activityLabel: "Main Activity — matches Wednesday's choice",
-        // Auto-matched to Wednesday: jungfraujoch & travelpass → mannlichen hike; mannlichen → valley.
         activityMatch: { jungfraujoch: "mh", travelpass: "mh", mannlichen: "valley" },
         activityOptions: [
           {
@@ -305,42 +328,23 @@ const SECTIONS = [
 ];
 
 // ─── TIME PARSE HELPER ────────────────────────────────────────────────────────
-// Returns a minutes-from-midnight sort value. Handles clock times, time ranges
-// (sorted by START time), and descriptive labels with sensible defaults.
 function parseTime(t) {
   if (!t) return 9999;
   const raw = t.trim();
   const lower = raw.toLowerCase();
-
-  // Descriptive (non-clock) labels → sensible sort values.
-  // Checked before clock parsing so "All Day"/"Flexible" land first, etc.
   const labelMap = [
-    [/all day/, -100],
-    [/flexible/, -100],
-    [/whenever ready/, 9 * 60],          // ~9:00 AM
-    [/early (morning|breakfast)/, 7 * 60], // ~7:00 AM
-    [/^morning/, 9 * 60],                  // ~9:00 AM
-    [/mid-?morning/, 10 * 60],             // ~10:00 AM
-    [/late morning/, 11 * 60],             // ~11:00 AM
-    [/midday|noon/, 12 * 60],              // 12:00 PM
-    [/early afternoon/, 13 * 60],          // ~1:00 PM
-    [/^afternoon/, 14 * 60],               // ~2:00 PM
-    [/late afternoon/, 16 * 60],           // ~4:00 PM
-    [/early evening/, 18 * 60],            // ~6:00 PM
-    [/^evening/, 19 * 60],                 // ~7:00 PM
-    [/after dinner/, 22 * 60],             // ~10:00 PM
-    [/late evening|late night/, 22.5 * 60],// ~10:30 PM
-    [/^night/, 23 * 60],                   // ~11:00 PM
+    [/all day/, -100], [/flexible/, -100],
+    [/whenever ready/, 9 * 60], [/early (morning|breakfast)/, 7 * 60],
+    [/^morning/, 9 * 60], [/mid-?morning/, 10 * 60], [/late morning/, 11 * 60],
+    [/midday|noon/, 12 * 60], [/early afternoon/, 13 * 60], [/^afternoon/, 14 * 60],
+    [/late afternoon/, 16 * 60], [/early evening/, 18 * 60], [/^evening/, 19 * 60],
+    [/after dinner/, 22 * 60], [/late evening|late night/, 22.5 * 60], [/^night/, 23 * 60],
   ];
-
-  // Try to find a real clock time first (this is the START of any range,
-  // since match() returns the first occurrence left-to-right).
   const clean = raw.replace(/[~→–-]/g, " ");
   const m = clean.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
   if (m) {
     let h = parseInt(m[1]), mn = parseInt(m[2]);
     let ap = (m[3] || "").toUpperCase();
-    // If no AM/PM on the start token, try to infer from a later token in the string.
     if (!ap) {
       const later = clean.slice(m.index + m[0].length).match(/(AM|PM)/i);
       if (later) ap = later[1].toUpperCase();
@@ -349,20 +353,15 @@ function parseTime(t) {
     if (ap === "AM" && h === 12) h = 0;
     return h * 60 + mn;
   }
-
-  // No clock time — fall back to descriptive label mapping.
-  for (const [re, val] of labelMap) {
-    if (re.test(lower)) return val;
-  }
-
-  // Unknown / option-style labels (e.g. "Option 1") keep a stable mid value
-  // so they don't jump to the very top or bottom unexpectedly.
+  for (const [re, val] of labelMap) { if (re.test(lower)) return val; }
   if (/option/.test(lower)) return 9000;
   return 9999;
 }
 
 // ─── STORAGE HELPERS ──────────────────────────────────────────────────────────
 const STORAGE_KEY = "eu-trip-2026";
+const DARK_KEY    = "eu-trip-dark";
+
 async function loadData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -372,58 +371,48 @@ async function loadData() {
 async function saveData(data) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
 }
+function loadDarkMode() {
+  try { return localStorage.getItem(DARK_KEY) === "true"; } catch { return false; }
+}
 
 // ─── WEATHER (Open-Meteo, no API key) ─────────────────────────────────────────
-// WMO weather codes → emoji + short label.
 function weatherCodeInfo(code) {
   if (code == null) return { icon: "🌡️", label: "—" };
-  if (code === 0) return { icon: "☀️", label: "Clear" };
-  if (code <= 2) return { icon: "🌤️", label: "Mostly clear" };
-  if (code === 3) return { icon: "☁️", label: "Overcast" };
-  if (code <= 48) return { icon: "🌫️", label: "Fog" };
-  if (code <= 57) return { icon: "🌦️", label: "Drizzle" };
-  if (code <= 67) return { icon: "🌧️", label: "Rain" };
-  if (code <= 77) return { icon: "🌨️", label: "Snow" };
-  if (code <= 82) return { icon: "🌧️", label: "Showers" };
-  if (code <= 86) return { icon: "🌨️", label: "Snow showers" };
-  if (code <= 99) return { icon: "⛈️", label: "Thunderstorm" };
+  if (code === 0)  return { icon: "☀️", label: "Clear" };
+  if (code <= 2)   return { icon: "🌤️", label: "Mostly clear" };
+  if (code === 3)  return { icon: "☁️", label: "Overcast" };
+  if (code <= 48)  return { icon: "🌫️", label: "Fog" };
+  if (code <= 57)  return { icon: "🌦️", label: "Drizzle" };
+  if (code <= 67)  return { icon: "🌧️", label: "Rain" };
+  if (code <= 77)  return { icon: "🌨️", label: "Snow" };
+  if (code <= 82)  return { icon: "🌧️", label: "Showers" };
+  if (code <= 86)  return { icon: "🌨️", label: "Snow showers" };
+  if (code <= 99)  return { icon: "⛈️", label: "Thunderstorm" };
   return { icon: "🌡️", label: "—" };
 }
 
-// Fetch daily forecast for a coordinate + date range, in Fahrenheit.
-// Uses Open-Meteo's current snake_case daily variable names and an explicit
-// temperature unit. Returns [] if no daily data (out of forecast window).
 async function fetchForecast(coords, range) {
   const params = new URLSearchParams({
-    latitude: String(coords.lat),
-    longitude: String(coords.lon),
+    latitude: String(coords.lat), longitude: String(coords.lon),
     daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-    temperature_unit: "fahrenheit",
-    timezone: "auto",
-    start_date: range.start,
-    end_date: range.end,
+    temperature_unit: "fahrenheit", timezone: "auto",
+    start_date: range.start, end_date: range.end,
   });
-  const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
-  const res = await fetch(url);
+  const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`);
   if (!res.ok) throw new Error("Weather request failed");
   const j = await res.json();
   const d = j.daily;
   if (!d || !d.time || d.time.length === 0) return [];
-  // Tolerate both new (weather_code) and legacy (weathercode) key names.
   const codes = d.weather_code || d.weathercode || [];
   const maxes = d.temperature_2m_max || [];
-  const mins = d.temperature_2m_min || [];
-  const pops = d.precipitation_probability_max || [];
+  const mins  = d.temperature_2m_min || [];
+  const pops  = d.precipitation_probability_max || [];
   return d.time.map((t, i) => ({
-    date: t,
-    code: codes[i],
-    max: maxes[i],
-    min: mins[i],
+    date: t, code: codes[i], max: maxes[i], min: mins[i],
     pop: pops[i] != null ? pops[i] : null,
   })).filter(x => x.max != null);
 }
 
-// Seasonal June averages per location in °F (fallback when forecast is out of range).
 const SEASONAL = {
   milan:  { hi: 81, lo: 63, note: "Warm, occasional afternoon thunderstorms" },
   como:   { hi: 79, lo: 61, note: "Warm and humid by the lake; afternoon showers possible" },
@@ -431,7 +420,6 @@ const SEASONAL = {
   nice:   { hi: 77, lo: 64, note: "Warm, sunny Mediterranean days" },
 };
 
-// Hook: fetch a section's forecast once, return a {date: dayData} lookup map.
 function useSectionForecast(section) {
   const [state, setState] = useState({ loading: true, byDate: {}, error: false });
   useEffect(() => {
@@ -451,38 +439,36 @@ function useSectionForecast(section) {
   return state;
 }
 
-// Compact live-weather chip shown in each day header.
+// ─── WEATHER CHIP ─────────────────────────────────────────────────────────────
 function DayWeatherChip({ forecast, loading }) {
-  if (loading) {
-    return <span style={{ fontSize:11,color:C.inkFaint,whiteSpace:"nowrap" }}>… </span>;
-  }
-  if (!forecast) {
-    return <span style={{ fontSize:10,color:C.inkFaint,whiteSpace:"nowrap" }} title="Live forecast not available for this date">—</span>;
-  }
+  const T = useT();
+  if (loading) return <span style={{ fontSize:11, color:T.inkFaint, whiteSpace:"nowrap" }}>… </span>;
+  if (!forecast) return <span style={{ fontSize:10, color:T.inkFaint, whiteSpace:"nowrap" }} title="Live forecast not available for this date">—</span>;
   const info = weatherCodeInfo(forecast.code);
   return (
-    <div title={info.label} style={{ display:"flex",alignItems:"center",gap:5,background:C.cream,border:`1px solid ${C.creamBorder}`,borderRadius:8,padding:"5px 9px",whiteSpace:"nowrap" }}>
-      <span style={{ fontSize:16,lineHeight:1 }}>{info.icon}</span>
-      <span style={{ fontSize:12,fontWeight:600,color:C.ink }}>{Math.round(forecast.max)}°<span style={{ color:C.inkFaint,fontWeight:400 }}>/{Math.round(forecast.min)}°F</span></span>
-      {forecast.pop != null && forecast.pop >= 20 && <span style={{ fontSize:10,color:C.como }}>💧{forecast.pop}%</span>}
+    <div title={info.label} style={{ display:"flex", alignItems:"center", gap:5, background:T.badge, border:`1px solid ${T.creamBorder}`, borderRadius:8, padding:"5px 9px", whiteSpace:"nowrap" }}>
+      <span style={{ fontSize:16, lineHeight:1 }}>{info.icon}</span>
+      <span style={{ fontSize:12, fontWeight:600, color:T.ink }}>{Math.round(forecast.max)}°<span style={{ color:T.inkFaint, fontWeight:400 }}>/{Math.round(forecast.min)}°F</span></span>
+      {forecast.pop != null && forecast.pop >= 20 && <span style={{ fontSize:10, color:C.como }}>💧{forecast.pop}%</span>}
     </div>
   );
 }
 
-// Section-level seasonal-average panel (live per-day forecasts live in each day header).
+// ─── SEASONAL PANEL ───────────────────────────────────────────────────────────
 function SeasonalPanel({ section }) {
+  const T = useT();
   const seasonal = SEASONAL[section.id];
   if (!seasonal) return null;
   const accent = section.color;
   return (
-    <div style={{ margin:"0 24px 16px",border:`1px solid ${C.creamBorder}`,borderRadius:10,background:"#fff",overflow:"hidden" }}>
-      <div style={{ display:"flex",alignItems:"center",gap:8,padding:"10px 16px",background:`${accent}0A` }}>
+    <div style={{ margin:"0 24px 16px", border:`1px solid ${T.creamBorder}`, borderRadius:10, background:T.cardBg, overflow:"hidden" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 16px", background:`${accent}0A` }}>
         <span style={{ fontSize:14 }}>🌡️</span>
-        <span style={{ fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:accent,fontWeight:600 }}>Typical June Weather</span>
-        <span style={{ fontSize:11,color:C.inkFaint,marginLeft:"auto" }}>live daily forecast in each day ↓</span>
+        <span style={{ fontSize:11, letterSpacing:"0.12em", textTransform:"uppercase", color:accent, fontWeight:600 }}>Typical June Weather</span>
+        <span style={{ fontSize:11, color:T.inkFaint, marginLeft:"auto" }}>live daily forecast in each day ↓</span>
       </div>
-      <div style={{ padding:"12px 16px",fontSize:13,color:C.inkMuted,lineHeight:1.6 }}>
-        <strong style={{ color:C.ink }}>{seasonal.hi}°F / {seasonal.lo}°F</strong> — {seasonal.note}.
+      <div style={{ padding:"12px 16px", fontSize:13, color:T.inkMuted, lineHeight:1.6 }}>
+        <strong style={{ color:T.ink }}>{seasonal.hi}°F / {seasonal.lo}°F</strong> — {seasonal.note}.
       </div>
     </div>
   );
@@ -490,12 +476,13 @@ function SeasonalPanel({ section }) {
 
 // ─── MODAL ────────────────────────────────────────────────────────────────────
 function Modal({ title, children, onClose }) {
+  const T = useT();
   return (
-    <div style={{ position:"fixed",inset:0,zIndex:1000,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",padding:16 }}>
-      <div style={{ background:"#fff",borderRadius:10,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.25)" }}>
-        <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderBottom:`1px solid ${C.creamBorder}` }}>
-          <span style={{ fontWeight:600,fontSize:15,color:C.ink }}>{title}</span>
-          <button onClick={onClose} style={{ background:"none",border:"none",fontSize:20,cursor:"pointer",color:C.inkFaint,lineHeight:1 }}>×</button>
+    <div style={{ position:"fixed", inset:0, zIndex:1000, background:T.overlayBg, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+      <div style={{ background:T.modalBg, borderRadius:10, width:"100%", maxWidth:480, maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,0.35)" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"16px 20px", borderBottom:`1px solid ${T.creamBorder}` }}>
+          <span style={{ fontWeight:600, fontSize:15, color:T.ink }}>{title}</span>
+          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:20, cursor:"pointer", color:T.inkFaint, lineHeight:1 }}>×</button>
         </div>
         <div style={{ padding:20 }}>{children}</div>
       </div>
@@ -505,10 +492,11 @@ function Modal({ title, children, onClose }) {
 
 // ─── FORM FIELD ───────────────────────────────────────────────────────────────
 function Field({ label, value, onChange, multiline }) {
-  const style = { width:"100%",padding:"8px 10px",borderRadius:6,border:`1px solid ${C.creamBorder}`,fontFamily:"inherit",fontSize:13,color:C.ink,background:"#fafaf8",resize:multiline?"vertical":"none",minHeight:multiline?80:undefined };
+  const T = useT();
+  const style = { width:"100%", padding:"8px 10px", borderRadius:6, border:`1px solid ${T.creamBorder}`, fontFamily:"inherit", fontSize:13, color:T.ink, background:T.inputBg, resize:multiline?"vertical":"none", minHeight:multiline?80:undefined };
   return (
     <div style={{ marginBottom:14 }}>
-      <label style={{ display:"block",fontSize:11,letterSpacing:"0.1em",textTransform:"uppercase",color:C.inkFaint,marginBottom:4 }}>{label}</label>
+      <label style={{ display:"block", fontSize:11, letterSpacing:"0.1em", textTransform:"uppercase", color:T.inkFaint, marginBottom:4 }}>{label}</label>
       {multiline
         ? <textarea value={value} onChange={e=>onChange(e.target.value)} style={style} />
         : <input value={value} onChange={e=>onChange(e.target.value)} style={style} />}
@@ -517,25 +505,23 @@ function Field({ label, value, onChange, multiline }) {
 }
 
 function Btn({ children, onClick, variant="primary", small }) {
-  const bg = variant==="primary"?C.gold:variant==="danger"?"#c0392b":variant==="ghost"?"transparent":"#eee";
-  const col = variant==="primary"?"#fff":variant==="danger"?"#fff":C.inkMuted;
-  const border = variant==="ghost"?`1px solid ${C.creamBorder}`:"none";
+  const T = useT();
+  const bg  = variant==="primary" ? C.gold : variant==="danger" ? "#c0392b" : variant==="ghost" ? "transparent" : T.btnSecBg;
+  const col = variant==="primary" ? "#fff"  : variant==="danger" ? "#fff"    : T.inkMuted;
+  const border = variant==="ghost" ? `1px solid ${T.creamBorder}` : "none";
   return (
-    <button onClick={onClick} style={{ background:bg,color:col,border,borderRadius:6,padding:small?"5px 10px":"8px 16px",fontSize:small?11:13,fontWeight:500,cursor:"pointer",fontFamily:"inherit" }}>
+    <button onClick={onClick} style={{ background:bg, color:col, border, borderRadius:6, padding:small?"5px 10px":"8px 16px", fontSize:small?11:13, fontWeight:500, cursor:"pointer", fontFamily:"inherit" }}>
       {children}
     </button>
   );
 }
 
 // ─── TIMELINE ITEM ────────────────────────────────────────────────────────────
-function TimelineItem({ item, destColor, onEdit }) {
+function TimelineItem({ item, onEdit }) {
+  const T = useT();
   const [hovered, setHovered] = useState(false);
   const [tapped, setTapped] = useState(false);
   const tapTimer = useRef(null);
-
-  const showEdit = hovered || tapped;
-  const isCustom = item.custom;
-  const isEdited = item.edited;
 
   function handleTap() {
     setTapped(true);
@@ -543,34 +529,33 @@ function TimelineItem({ item, destColor, onEdit }) {
     tapTimer.current = setTimeout(() => setTapped(false), 3000);
   }
 
-  const dotColor = item.primary ? C.gold : "#fff";
-  const dotBorder = item.primary ? C.gold : C.creamBorder;
-  const itemBg = isCustom ? "#EEF7FF" : isEdited ? "#FFFBF0" : "#fff";
-  const itemBorder = isCustom ? `1px solid #B8D8F5` : isEdited ? `1px solid #EDD98A` : `1px solid ${C.creamBorder}`;
+  const showEdit  = hovered || tapped;
+  const isCustom  = item.custom;
+  const isEdited  = item.edited;
+  const dotColor  = item.primary ? C.gold : T.dotBg;
+  const dotBorder = item.primary ? C.gold : T.creamBorder;
+  const itemBg     = isCustom ? T.customBg  : isEdited ? T.editedBg  : T.cardBg;
+  const itemBorder = isCustom ? `1px solid ${T.customBorder}` : isEdited ? `1px solid ${T.editedBorder}` : `1px solid ${T.creamBorder}`;
 
   return (
     <div
-      style={{ position:"relative",marginBottom:16,paddingLeft:32 }}
+      style={{ position:"relative", marginBottom:16, paddingLeft:32 }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onTouchStart={handleTap}
     >
-      {/* dot */}
-      <div style={{ position:"absolute",left:0,top:6,width:14,height:14,borderRadius:"50%",background:dotColor,border:`2px solid ${dotBorder}`,zIndex:1 }} />
-      {/* card */}
-      <div style={{ background:itemBg,border:itemBorder,borderRadius:8,padding:"12px 14px",position:"relative",transition:"box-shadow 0.15s" }}>
-        {/* badges */}
-        <div style={{ display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap" }}>
-          <span style={{ fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:C.inkFaint }}>{item.time}</span>
-          {isCustom && <span style={{ fontSize:10,background:"#EEF7FF",color:"#1A5FA0",border:"1px solid #B8D8F5",borderRadius:3,padding:"1px 6px",letterSpacing:"0.05em",textTransform:"uppercase" }}>Custom</span>}
-          {isEdited && !isCustom && <span style={{ fontSize:10,background:"#FFFBF0",color:"#8A5A00",border:"1px solid #EDD98A",borderRadius:3,padding:"1px 6px",letterSpacing:"0.05em",textTransform:"uppercase" }}>Edited</span>}
+      <div style={{ position:"absolute", left:0, top:6, width:14, height:14, borderRadius:"50%", background:dotColor, border:`2px solid ${dotBorder}`, zIndex:1 }} />
+      <div style={{ background:itemBg, border:itemBorder, borderRadius:8, padding:"12px 14px", position:"relative", transition:"box-shadow 0.15s" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4, flexWrap:"wrap" }}>
+          <span style={{ fontSize:10, letterSpacing:"0.1em", textTransform:"uppercase", color:T.inkFaint }}>{item.time}</span>
+          {isCustom && <span style={{ fontSize:10, background:T.customBg, color:T.customLabel, border:`1px solid ${T.customBorder}`, borderRadius:3, padding:"1px 6px", letterSpacing:"0.05em", textTransform:"uppercase" }}>Custom</span>}
+          {isEdited && !isCustom && <span style={{ fontSize:10, background:T.editedBg, color:T.editedLabel, border:`1px solid ${T.editedBorder}`, borderRadius:3, padding:"1px 6px", letterSpacing:"0.05em", textTransform:"uppercase" }}>Edited</span>}
         </div>
-        <div style={{ fontWeight:500,fontSize:14,color:C.ink,marginBottom:4,lineHeight:1.4 }}>{item.title}</div>
-        {item.desc && <div style={{ fontSize:12,color:C.inkMuted,lineHeight:1.65,whiteSpace:"pre-line" }}>{item.desc}</div>}
-        {item.cost && <div style={{ marginTop:6,fontSize:11,background:C.badge,border:`1px solid ${C.creamBorder}`,borderRadius:4,padding:"2px 8px",display:"inline-block",color:C.inkMuted }}>💰 {item.cost}</div>}
-        {/* edit button */}
+        <div style={{ fontWeight:500, fontSize:14, color:T.ink, marginBottom:4, lineHeight:1.4 }}>{item.title}</div>
+        {item.desc && <div style={{ fontSize:12, color:T.inkMuted, lineHeight:1.65, whiteSpace:"pre-line" }}>{item.desc}</div>}
+        {item.cost && <div style={{ marginTop:6, fontSize:11, background:T.badge, border:`1px solid ${T.creamBorder}`, borderRadius:4, padding:"2px 8px", display:"inline-block", color:T.inkMuted }}>💰 {item.cost}</div>}
         {showEdit && (
-          <button onClick={() => onEdit(item)} style={{ position:"absolute",top:8,right:8,background:C.badge,border:`1px solid ${C.creamBorder}`,borderRadius:5,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13 }} title="Edit item">✏️</button>
+          <button onClick={() => onEdit(item)} style={{ position:"absolute", top:8, right:8, background:T.badge, border:`1px solid ${T.creamBorder}`, borderRadius:5, width:28, height:28, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13 }} title="Edit item">✏️</button>
         )}
       </div>
     </div>
@@ -579,29 +564,22 @@ function TimelineItem({ item, destColor, onEdit }) {
 
 // ─── ADD ACTIVITY MODAL ───────────────────────────────────────────────────────
 function AddActivityModal({ sections, onSave, onClose }) {
+  const T = useT();
   const [sectionId, setSectionId] = useState(sections[0]?.id || "");
-  const [targetId, setTargetId] = useState("");
-  const [time, setTime] = useState("");
+  const [targetId,  setTargetId]  = useState("");
+  const [time,  setTime]  = useState("");
   const [title, setTitle] = useState("");
-  const [desc, setDesc] = useState("");
-  const [cost, setCost] = useState("");
+  const [desc,  setDesc]  = useState("");
+  const [cost,  setCost]  = useState("");
 
   const section = sections.find(s => s.id === sectionId);
-
-  // Build a flat list of timeline targets. Scenario days and activity-option
-  // days expand into one target per timeline so a custom activity lands on the
-  // exact timeline the user intends.
   const targets = [];
   (section?.days || []).forEach(d => {
     if (d.scenarios) {
-      d.scenarios.forEach(sc => {
-        targets.push({ id: `${d.id}::${sc.key}`, label: `${d.badge} — ${sc.label}` });
-      });
+      d.scenarios.forEach(sc => { targets.push({ id: `${d.id}::${sc.key}`, label: `${d.badge} — ${sc.label}` }); });
     } else if (d.activityOptions) {
       targets.push({ id: `${d.id}::lead`, label: `${d.badge} — Morning (shared)` });
-      d.activityOptions.forEach(o => {
-        targets.push({ id: `${d.id}::${o.key}`, label: `${d.badge} — ${o.label}` });
-      });
+      d.activityOptions.forEach(o => { targets.push({ id: `${d.id}::${o.key}`, label: `${d.badge} — ${o.label}` }); });
       targets.push({ id: `${d.id}::trail`, label: `${d.badge} — Evening (shared)` });
     } else {
       targets.push({ id: d.id, label: `${d.badge} — ${d.title}` });
@@ -615,17 +593,20 @@ function AddActivityModal({ sections, onSave, onClose }) {
     onSave({ dayId: targetId, time: time || "—", title: title.trim(), desc: desc.trim(), cost: cost.trim(), custom: true, primary: false, id: `custom-${Date.now()}` });
   }
 
+  const selectStyle = { width:"100%", padding:"8px 10px", borderRadius:6, border:`1px solid ${T.creamBorder}`, fontSize:13, fontFamily:"inherit", background:T.inputBg, color:T.ink };
+  const labelStyle  = { display:"block", fontSize:11, letterSpacing:"0.1em", textTransform:"uppercase", color:T.inkFaint, marginBottom:4 };
+
   return (
     <Modal title="➕ Add Custom Activity" onClose={onClose}>
       <div style={{ marginBottom:14 }}>
-        <label style={{ display:"block",fontSize:11,letterSpacing:"0.1em",textTransform:"uppercase",color:C.inkFaint,marginBottom:4 }}>Trip Destination</label>
-        <select value={sectionId} onChange={e=>setSectionId(e.target.value)} style={{ width:"100%",padding:"8px 10px",borderRadius:6,border:`1px solid ${C.creamBorder}`,fontSize:13,fontFamily:"inherit",background:"#fafaf8" }}>
+        <label style={labelStyle}>Trip Destination</label>
+        <select value={sectionId} onChange={e=>setSectionId(e.target.value)} style={selectStyle}>
           {sections.filter(s => s.id !== "departure").map(s => <option key={s.id} value={s.id}>{s.emoji} {s.label}</option>)}
         </select>
       </div>
       <div style={{ marginBottom:14 }}>
-        <label style={{ display:"block",fontSize:11,letterSpacing:"0.1em",textTransform:"uppercase",color:C.inkFaint,marginBottom:4 }}>Day / Timeline</label>
-        <select value={targetId} onChange={e=>setTargetId(e.target.value)} style={{ width:"100%",padding:"8px 10px",borderRadius:6,border:`1px solid ${C.creamBorder}`,fontSize:13,fontFamily:"inherit",background:"#fafaf8" }}>
+        <label style={labelStyle}>Day / Timeline</label>
+        <select value={targetId} onChange={e=>setTargetId(e.target.value)} style={selectStyle}>
           {targets.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
       </div>
@@ -633,7 +614,7 @@ function AddActivityModal({ sections, onSave, onClose }) {
       <Field label="Time (e.g. 3:00 PM)" value={time} onChange={setTime} />
       <Field label="Cost (free text, e.g. ~€15 pp)" value={cost} onChange={setCost} />
       <Field label="Notes / Description" value={desc} onChange={setDesc} multiline />
-      <div style={{ display:"flex",gap:8,justifyContent:"flex-end",marginTop:4 }}>
+      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:4 }}>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
         <Btn onClick={handleSave} variant="primary">Save Activity</Btn>
       </div>
@@ -643,10 +624,11 @@ function AddActivityModal({ sections, onSave, onClose }) {
 
 // ─── EDIT ITEM MODAL ──────────────────────────────────────────────────────────
 function EditItemModal({ item, onSave, onReset, onClose }) {
-  const [time, setTime] = useState(item.time || "");
+  const T = useT();
+  const [time,  setTime]  = useState(item.time  || "");
   const [title, setTitle] = useState(item.title || "");
-  const [desc, setDesc] = useState(item.desc || "");
-  const [cost, setCost] = useState(item.cost || "");
+  const [desc,  setDesc]  = useState(item.desc  || "");
+  const [cost,  setCost]  = useState(item.cost  || "");
 
   function handleSave() {
     if (!title.trim()) return;
@@ -660,11 +642,12 @@ function EditItemModal({ item, onSave, onReset, onClose }) {
       <Field label="Cost (free text)" value={cost} onChange={setCost} />
       <Field label="Notes / Description" value={desc} onChange={setDesc} multiline />
       {(item.edited || item.custom) && (
-        <div style={{ marginBottom:14,padding:"10px 12px",background:"#FFF5F0",border:"1px solid #FAAB78",borderRadius:6,fontSize:12,color:"#7A2800" }}>
-          {item.custom ? "Custom activity — no original to restore." : "This item has been edited from its original."} {!item.custom && <button onClick={onReset} style={{ background:"none",border:"none",color:C.milan,cursor:"pointer",textDecoration:"underline",fontSize:12,padding:0,fontFamily:"inherit" }}>Restore original</button>}
+        <div style={{ marginBottom:14, padding:"10px 12px", background:T.warningBg, border:`1px solid ${T.warningBorder}`, borderRadius:6, fontSize:12, color:T.warningText }}>
+          {item.custom ? "Custom activity — no original to restore." : "This item has been edited from its original."}{" "}
+          {!item.custom && <button onClick={onReset} style={{ background:"none", border:"none", color:T.restoreLink, cursor:"pointer", textDecoration:"underline", fontSize:12, padding:0, fontFamily:"inherit" }}>Restore original</button>}
         </div>
       )}
-      <div style={{ display:"flex",gap:8,justifyContent:"flex-end",marginTop:4 }}>
+      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:4 }}>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
         <Btn onClick={handleSave} variant="primary">Save Changes</Btn>
       </div>
@@ -672,131 +655,122 @@ function EditItemModal({ item, onSave, onReset, onClose }) {
   );
 }
 
-// ─── TIMELINE (shared) ────────────────────────────────────────────────────────
-function Timeline({ items, destColor, onEdit, compact }) {
+// ─── TIMELINE ─────────────────────────────────────────────────────────────────
+function Timeline({ items, onEdit, compact }) {
+  const T = useT();
   if (!items || items.length === 0) return null;
   return (
-    <div style={{ padding: compact ? "12px 20px 12px 24px" : "20px 20px 20px 24px",position:"relative" }}>
-      <div style={{ position:"absolute",left:31,top:compact?12:20,bottom:compact?12:20,width:1,background:C.creamBorder }} />
-      {items.map(item => (
-        <TimelineItem key={item.id} item={item} destColor={destColor} onEdit={onEdit} />
-      ))}
+    <div style={{ padding: compact ? "12px 20px 12px 24px" : "20px 20px 20px 24px", position:"relative" }}>
+      <div style={{ position:"absolute", left:31, top:compact?12:20, bottom:compact?12:20, width:1, background:T.creamBorder }} />
+      {items.map(item => <TimelineItem key={item.id} item={item} onEdit={onEdit} />)}
     </div>
   );
 }
 
 // ─── DAY CARD ─────────────────────────────────────────────────────────────────
-// Handles three day types:
-//  • single timeline (day.items)
-//  • scenario days (day.scenarios) — independent toggle, e.g. Milan Jun 11
-//  • activity-option days (day.leadItems + day.activityOptions + day.trailItems)
-//    where the middle slot toggles. If `activityKey`/`onActivityChange` are
-//    passed, the toggle is *controlled* (used to sync Wed → Thu).
 function DayCard({ day, color, onEdit, activityKey, onActivityChange, forecast, forecastLoading }) {
+  const T = useT();
   const [activeScenario, setActiveScenario] = useState(day.scenarios ? day.scenarios[0].key : null);
-  const [localActivity, setLocalActivity] = useState(day.activityOptions ? day.activityOptions[0].key : null);
+  const [localActivity,  setLocalActivity]  = useState(day.activityOptions ? day.activityOptions[0].key : null);
 
   const header = (
-    <div style={{ padding:"16px 20px",borderBottom:`1px solid ${C.creamBorder}`,display:"flex",alignItems:"center",gap:12 }}>
-      <div style={{ width:46,height:46,borderRadius:"50%",border:`2px solid ${color}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:600,color,background:`${color}12`,flexShrink:0,lineHeight:1.2,textAlign:"center" }}>{day.badge}</div>
-      <div style={{ flex:1,minWidth:0 }}>
-        <div style={{ fontFamily:"Georgia,serif",fontSize:17,fontWeight:700,color,lineHeight:1.2 }}>{day.title}</div>
-        {day.subtitle && <div style={{ fontSize:11,color:C.inkFaint,marginTop:2 }}>{day.subtitle}</div>}
+    <div style={{ padding:"16px 20px", borderBottom:`1px solid ${T.creamBorder}`, display:"flex", alignItems:"center", gap:12 }}>
+      <div style={{ width:46, height:46, borderRadius:"50%", border:`2px solid ${color}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:600, color, background:`${color}12`, flexShrink:0, lineHeight:1.2, textAlign:"center" }}>{day.badge}</div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontFamily:"Georgia,serif", fontSize:17, fontWeight:700, color, lineHeight:1.2 }}>{day.title}</div>
+        {day.subtitle && <div style={{ fontSize:11, color:T.inkFaint, marginTop:2 }}>{day.subtitle}</div>}
       </div>
       <DayWeatherChip forecast={forecast} loading={forecastLoading} />
     </div>
   );
 
-  // ── Scenario day (independent toggle) ──
+  // ── Scenario day ──
   if (day.scenarios) {
     const current = day.scenarios.find(s => s.key === activeScenario) || day.scenarios[0];
     return (
-      <div style={{ margin:"0 24px 32px",borderRadius:10,border:`1px solid ${C.creamBorder}`,background:"#fff",overflow:"hidden" }}>
+      <div style={{ margin:"0 24px 32px", borderRadius:10, border:`1px solid ${T.creamBorder}`, background:T.cardBg, overflow:"hidden" }}>
         {header}
-        <div style={{ display:"flex",borderBottom:`1px solid ${C.creamBorder}` }}>
+        <div style={{ display:"flex", borderBottom:`1px solid ${T.creamBorder}` }}>
           {day.scenarios.map(sc => {
             const active = sc.key === current.key;
             return (
-              <button key={sc.key} onClick={() => setActiveScenario(sc.key)} style={{ flex:1,padding:"12px 14px",fontSize:12,fontWeight:500,cursor:"pointer",background:active?color:"#fff",color:active?"#fff":C.inkMuted,border:"none",borderRight:`1px solid ${C.creamBorder}`,fontFamily:"inherit",lineHeight:1.3 }}>
+              <button key={sc.key} onClick={() => setActiveScenario(sc.key)} style={{ flex:1, padding:"12px 14px", fontSize:12, fontWeight:500, cursor:"pointer", background:active?color:T.cardBg, color:active?"#fff":T.inkMuted, border:"none", borderRight:`1px solid ${T.creamBorder}`, fontFamily:"inherit", lineHeight:1.3 }}>
                 {sc.label}
               </button>
             );
           })}
         </div>
         {current.note && (
-          <div style={{ padding:"10px 20px",fontSize:12,color:C.inkMuted,background:`${color}0A`,borderBottom:`1px solid ${C.creamBorder}`,fontStyle:"italic" }}>{current.note}</div>
+          <div style={{ padding:"10px 20px", fontSize:12, color:T.inkMuted, background:`${color}0A`, borderBottom:`1px solid ${T.creamBorder}`, fontStyle:"italic" }}>{current.note}</div>
         )}
-        <Timeline items={current.items} destColor={color} onEdit={onEdit} />
+        <Timeline items={current.items} onEdit={onEdit} />
       </div>
     );
   }
 
-  // ── Activity-option day (shared bookends + toggleable middle) ──
+  // ── Activity-option day ──
   if (day.activityOptions) {
-    // If activityKey is passed WITH a handler → controlled & editable (Wed).
-    // If activityKey is passed WITHOUT a handler → locked/synced (Thu).
-    // If neither → local state (standalone).
     const selKey = activityKey != null ? activityKey : localActivity;
     const setSel = onActivityChange || (activityKey != null ? null : setLocalActivity);
     const locked = activityKey != null && !onActivityChange;
     const current = day.activityOptions.find(o => o.key === selKey) || day.activityOptions[0];
-
     return (
-      <div style={{ margin:"0 24px 32px",borderRadius:10,border:`1px solid ${C.creamBorder}`,background:"#fff",overflow:"hidden" }}>
+      <div style={{ margin:"0 24px 32px", borderRadius:10, border:`1px solid ${T.creamBorder}`, background:T.cardBg, overflow:"hidden" }}>
         {header}
-        {/* lead items */}
-        {day.leadItems && day.leadItems.length > 0 && <Timeline items={day.leadItems} destColor={color} onEdit={onEdit} compact />}
-        {/* activity toggle */}
+        {day.leadItems && day.leadItems.length > 0 && <Timeline items={day.leadItems} onEdit={onEdit} compact />}
         <div style={{ padding:"0 20px" }}>
-          <div style={{ fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:C.inkFaint,margin:"4px 0 8px" }}>{day.activityLabel}</div>
-          <div style={{ display:"flex",border:`1px solid ${C.creamBorder}`,borderRadius:8,overflow:"hidden",marginBottom:4 }}>
+          <div style={{ fontSize:10, letterSpacing:"0.1em", textTransform:"uppercase", color:T.inkFaint, margin:"4px 0 8px" }}>{day.activityLabel}</div>
+          <div style={{ display:"flex", border:`1px solid ${T.creamBorder}`, borderRadius:8, overflow:"hidden", marginBottom:4 }}>
             {day.activityOptions.map(o => {
               const active = o.key === current.key;
               return (
-                <button key={o.key} disabled={locked} onClick={() => !locked && setSel && setSel(o.key)} style={{ flex:1,padding:"10px 8px",fontSize:11.5,fontWeight:500,cursor:locked?"default":"pointer",background:active?color:"#fff",color:active?"#fff":(locked?C.inkFaint:C.inkMuted),border:"none",borderRight:`1px solid ${C.creamBorder}`,fontFamily:"inherit",lineHeight:1.3,opacity:locked&&!active?0.45:1 }}>
+                <button key={o.key} disabled={locked} onClick={() => !locked && setSel && setSel(o.key)} style={{ flex:1, padding:"10px 8px", fontSize:11.5, fontWeight:500, cursor:locked?"default":"pointer", background:active?color:T.cardBg, color:active?"#fff":(locked?T.inkFaint:T.inkMuted), border:"none", borderRight:`1px solid ${T.creamBorder}`, fontFamily:"inherit", lineHeight:1.3, opacity:locked&&!active?0.45:1 }}>
                   {o.label}
                 </button>
               );
             })}
           </div>
-          {locked && (
-            <div style={{ fontSize:11,color:C.inkFaint,marginBottom:8,fontStyle:"italic" }}>↑ Auto-matched to your Wednesday choice — change it on Wednesday to update this day.</div>
-          )}
+          {locked && <div style={{ fontSize:11, color:T.inkFaint, marginBottom:8, fontStyle:"italic" }}>↑ Auto-matched to your Wednesday choice — change it on Wednesday to update this day.</div>}
         </div>
-        {current.note && (
-          <div style={{ padding:"6px 20px 0",fontSize:12,color:C.inkMuted,fontStyle:"italic" }}>{current.note}</div>
-        )}
-        <Timeline items={current.items} destColor={color} onEdit={onEdit} />
-        {/* trail items */}
-        {day.trailItems && day.trailItems.length > 0 && <Timeline items={day.trailItems} destColor={color} onEdit={onEdit} compact />}
+        {current.note && <div style={{ padding:"6px 20px 0", fontSize:12, color:T.inkMuted, fontStyle:"italic" }}>{current.note}</div>}
+        <Timeline items={current.items} onEdit={onEdit} />
+        {day.trailItems && day.trailItems.length > 0 && <Timeline items={day.trailItems} onEdit={onEdit} compact />}
       </div>
     );
   }
 
-  // ── Single timeline day ──
+  // ── Single timeline ──
   return (
-    <div style={{ margin:"0 24px 32px",borderRadius:10,border:`1px solid ${C.creamBorder}`,background:"#fff",overflow:"hidden" }}>
+    <div style={{ margin:"0 24px 32px", borderRadius:10, border:`1px solid ${T.creamBorder}`, background:T.cardBg, overflow:"hidden" }}>
       {header}
-      <Timeline items={day.items} destColor={color} onEdit={onEdit} />
+      <Timeline items={day.items} onEdit={onEdit} />
     </div>
   );
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function TravelGuide() {
-  const [activeSection, setActiveSection] = useState("milan");
-  const [data, setData] = useState(null); // { edits, customs, originals }
-  const [showAdd, setShowAdd] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [saving, setSaving] = useState(false);
-  // Wengen main-activity selection (Wed). Thursday auto-matches via activityMatch.
+  const [activeSection,  setActiveSection]  = useState("milan");
+  const [data,           setData]           = useState(null);
+  const [showAdd,        setShowAdd]        = useState(false);
+  const [editItem,       setEditItem]       = useState(null);
+  const [saving,         setSaving]         = useState(false);
   const [wengenActivity, setWengenActivity] = useState("jungfraujoch");
+  const [darkMode,       setDarkMode]       = useState(loadDarkMode);
+
+  const T = THEMES[darkMode ? "dark" : "light"];
+
+  function toggleDark() {
+    setDarkMode(d => {
+      const next = !d;
+      try { localStorage.setItem(DARK_KEY, String(next)); } catch {}
+      return next;
+    });
+  }
 
   const currentSection = SECTIONS.find(s => s.id === activeSection);
-  // Fetch the current section's forecast once; look up per-day below.
   const forecast = useSectionForecast(currentSection);
 
-  // Load persisted data on mount
   useEffect(() => { loadData().then(setData); }, []);
 
   async function persist(newData) {
@@ -805,8 +779,6 @@ export default function TravelGuide() {
     setSaving(false);
   }
 
-  // Merge edits + custom items into a single sorted item list for a given
-  // "timeline id" (either a day id, or a scenario id like "milan-jun11::a").
   function mergeItems(items, timelineId) {
     const merged = items.map(item => {
       const edit = data.edits[item.id];
@@ -816,30 +788,18 @@ export default function TravelGuide() {
     return [...merged, ...customs].sort((a, b) => parseTime(a.time) - parseTime(b.time));
   }
 
-  // Build merged section data. Days may have `items` (single timeline),
-  // `scenarios` (toggleable timelines), or `leadItems`+`activityOptions`+`trailItems`.
   function getMergedDays(section) {
     if (!data) return section.days;
     return section.days.map(day => {
       if (day.scenarios) {
-        return {
-          ...day,
-          scenarios: day.scenarios.map(sc => ({
-            ...sc,
-            items: mergeItems(sc.items, `${day.id}::${sc.key}`),
-          })),
-        };
+        return { ...day, scenarios: day.scenarios.map(sc => ({ ...sc, items: mergeItems(sc.items, `${day.id}::${sc.key}`) })) };
       }
       if (day.activityOptions) {
         return {
           ...day,
-          // Custom items added to a bookend go to "<dayId>::lead" / "::trail".
-          leadItems: mergeItems(day.leadItems || [], `${day.id}::lead`),
+          leadItems:  mergeItems(day.leadItems  || [], `${day.id}::lead`),
           trailItems: mergeItems(day.trailItems || [], `${day.id}::trail`),
-          activityOptions: day.activityOptions.map(o => ({
-            ...o,
-            items: mergeItems(o.items, `${day.id}::${o.key}`),
-          })),
+          activityOptions: day.activityOptions.map(o => ({ ...o, items: mergeItems(o.items, `${day.id}::${o.key}`) })),
         };
       }
       return { ...day, items: mergeItems(day.items, day.id) };
@@ -856,18 +816,14 @@ export default function TravelGuide() {
   async function handleEditSave(updatedItem) {
     let next;
     if (updatedItem.custom) {
-      // Find which day this custom item belongs to and update it there
       const newCustoms = { ...data.customs };
       for (const dayId in newCustoms) {
         newCustoms[dayId] = newCustoms[dayId].map(i => i.id === updatedItem.id ? updatedItem : i);
       }
       next = { ...data, customs: newCustoms };
     } else {
-      // Save original if not already saved, then save edit
       const originals = { ...data.originals };
-      if (!originals[updatedItem.id]) {
-        originals[updatedItem.id] = editItem; // preserve pre-edit state
-      }
+      if (!originals[updatedItem.id]) originals[updatedItem.id] = editItem;
       const edits = { ...data.edits, [updatedItem.id]: updatedItem };
       next = { ...data, edits, originals };
     }
@@ -889,91 +845,100 @@ export default function TravelGuide() {
     setEditItem(null);
   }
 
-  if (!data) return (
-    <div style={{ display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.cream,fontFamily:"sans-serif",color:C.inkMuted,fontSize:14 }}>
-      Loading your travel guide…
-    </div>
-  );
-
   return (
-    <div style={{ fontFamily:"'DM Sans', system-ui, sans-serif",background:C.cream,minHeight:"100vh",color:C.ink }}>
-
-      {/* ── COVER ── */}
-      <div style={{ background:C.ink,color:"#fff",padding:"48px 32px 36px",position:"relative",overflow:"hidden" }}>
-        <div style={{ position:"absolute",top:-60,right:-60,width:300,height:300,borderRadius:"50%",border:"1px solid rgba(201,168,76,0.2)",pointerEvents:"none" }} />
-        <div style={{ fontSize:10,letterSpacing:"0.2em",textTransform:"uppercase",color:C.gold,marginBottom:10 }}>◆ Day-by-Day Itinerary · Summer 2026 · Version 4</div>
-        <div style={{ fontFamily:"Georgia,serif",fontSize:38,fontWeight:700,lineHeight:1.1,marginBottom:6 }}>European<br/>Adventure</div>
-        <div style={{ fontSize:14,color:"rgba(255,255,255,0.5)",marginBottom:24 }}>Milan · Lake Como · Wengen · Nice — June 11–23, 2026</div>
-        <div style={{ display:"flex",flexWrap:"wrap",gap:8 }}>
-          {[["✈","Milan","Jun 11–12"],["🏔","Malgrate","Jun 12–16"],["🇨🇭","Wengen","Jun 16–19"],["🇫🇷","Nice","Jun 19–23"],["✈","Departure","Jun 23"]].map(([e,l,d]) => (
-            <div key={l} style={{ background:"rgba(255,255,255,0.08)",border:"1px solid rgba(255,255,255,0.12)",borderRadius:4,padding:"5px 12px",fontSize:12,color:"rgba(255,255,255,0.8)" }}>{e} {l} · {d}</div>
-          ))}
+    <ThemeCtx.Provider value={{ T, darkMode, toggleDark }}>
+      {!data ? (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", background:T.cream, fontFamily:"sans-serif", color:T.inkMuted, fontSize:14 }}>
+          Loading your travel guide…
         </div>
-      </div>
+      ) : (
+        <div style={{ fontFamily:"'DM Sans', system-ui, sans-serif", background:T.cream, minHeight:"100vh", color:T.ink }}>
 
-      {/* ── NAV ── */}
-      <div style={{ background:"#fff",borderBottom:`1px solid ${C.creamBorder}`,position:"sticky",top:0,zIndex:50,display:"flex",overflowX:"auto" }}>
-        {SECTIONS.map(s => (
-          <button key={s.id} onClick={() => setActiveSection(s.id)} style={{ flexShrink:0,padding:"14px 18px",fontSize:12,letterSpacing:"0.05em",textTransform:"uppercase",background:"none",border:"none",borderBottom:activeSection===s.id?`2px solid ${s.color}`:"2px solid transparent",color:activeSection===s.id?s.color:C.inkMuted,cursor:"pointer",fontFamily:"inherit",fontWeight:activeSection===s.id?500:400,transition:"color 0.2s" }}>
-            {s.emoji} {s.label}
-          </button>
-        ))}
-      </div>
-
-      {/* ── CONTENT ── */}
-      {currentSection && (
-        <div style={{ maxWidth:760,margin:"0 auto",padding:"0 0 80px" }}>
-          {/* Section header */}
-          <div style={{ padding:"36px 24px 24px" }}>
-            <div style={{ fontSize:10,letterSpacing:"0.18em",textTransform:"uppercase",color:C.inkFaint,marginBottom:8 }}>
-              {SECTIONS.findIndex(s=>s.id===activeSection)+1} / {SECTIONS.length}
+          {/* ── COVER ── */}
+          <div style={{ background:T.heroBg, color:"#fff", padding:"48px 32px 36px", position:"relative", overflow:"hidden" }}>
+            <div style={{ position:"absolute", top:-60, right:-60, width:300, height:300, borderRadius:"50%", border:"1px solid rgba(201,168,76,0.2)", pointerEvents:"none" }} />
+            <div style={{ fontSize:10, letterSpacing:"0.2em", textTransform:"uppercase", color:C.gold, marginBottom:10 }}>◆ Day-by-Day Itinerary · Summer 2026 · Version 4</div>
+            <div style={{ fontFamily:"Georgia,serif", fontSize:38, fontWeight:700, lineHeight:1.1, marginBottom:6 }}>European<br/>Adventure</div>
+            <div style={{ fontSize:14, color:"rgba(255,255,255,0.5)", marginBottom:24 }}>Milan · Lake Como · Wengen · Nice — June 11–23, 2026</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              {[["✈","Milan","Jun 11–12"],["🏔","Malgrate","Jun 12–16"],["🇨🇭","Wengen","Jun 16–19"],["🇫🇷","Nice","Jun 19–23"],["✈","Departure","Jun 23"]].map(([e,l,d]) => (
+                <div key={l} style={{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:4, padding:"5px 12px", fontSize:12, color:"rgba(255,255,255,0.8)" }}>{e} {l} · {d}</div>
+              ))}
             </div>
-            <div style={{ fontFamily:"Georgia,serif",fontSize:32,fontWeight:700,color:currentSection.color,marginBottom:6 }}>{currentSection.emoji} {currentSection.label}</div>
-            <div style={{ fontSize:12,color:C.inkMuted,background:C.badge,border:`1px solid ${C.creamBorder}`,borderRadius:4,display:"inline-block",padding:"4px 10px" }}>{currentSection.dates}</div>
           </div>
 
-          {/* Seasonal averages (live per-day forecast sits in each day header) */}
-          {currentSection.coords && <SeasonalPanel section={currentSection} />}
+          {/* ── NAV ── */}
+          <div style={{ background:T.navBg, borderBottom:`1px solid ${T.creamBorder}`, position:"sticky", top:0, zIndex:50, display:"flex", alignItems:"center", overflowX:"auto" }}>
+            {SECTIONS.map(s => (
+              <button key={s.id} onClick={() => setActiveSection(s.id)} style={{ flexShrink:0, padding:"14px 18px", fontSize:12, letterSpacing:"0.05em", textTransform:"uppercase", background:"none", border:"none", borderBottom:activeSection===s.id?`2px solid ${s.color}`:"2px solid transparent", color:activeSection===s.id?s.color:T.inkMuted, cursor:"pointer", fontFamily:"inherit", fontWeight:activeSection===s.id?500:400, transition:"color 0.2s" }}>
+                {s.emoji} {s.label}
+              </button>
+            ))}
+            {/* Dark mode toggle */}
+            <div style={{ marginLeft:"auto", paddingRight:12, flexShrink:0 }}>
+              <button
+                onClick={toggleDark}
+                title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+                style={{ background:T.badge, border:`1px solid ${T.creamBorder}`, borderRadius:20, padding:"5px 12px", fontSize:15, cursor:"pointer", lineHeight:1, color:T.ink, fontFamily:"inherit", display:"flex", alignItems:"center", gap:5 }}
+              >
+                {darkMode ? "☀️" : "🌙"}
+                <span style={{ fontSize:11, color:T.inkMuted }}>{darkMode ? "Light" : "Dark"}</span>
+              </button>
+            </div>
+          </div>
 
-          {/* Days */}
-          {getMergedDays(currentSection).map(day => {
-            const dayForecast = forecast.byDate[day.date];
-            const fp = { forecast: dayForecast, forecastLoading: forecast.loading };
-            // Wengen Wed/Thu share a synced main-activity selection.
-            if (day.activityOptions && activeSection === "wengen") {
-              if (day.id === "wengen-jun17") {
-                return <DayCard key={day.id} day={day} color={currentSection.color} onEdit={setEditItem}
-                  activityKey={wengenActivity} onActivityChange={setWengenActivity} {...fp} />;
-              }
-              if (day.id === "wengen-jun18") {
-                const matched = day.activityMatch?.[wengenActivity] || day.activityOptions[0].key;
-                return <DayCard key={day.id} day={day} color={currentSection.color} onEdit={setEditItem}
-                  activityKey={matched} {...fp} />;
-              }
-            }
-            return <DayCard key={day.id} day={day} color={currentSection.color} onEdit={setEditItem} {...fp} />;
-          })}
+          {/* ── CONTENT ── */}
+          {currentSection && (
+            <div style={{ maxWidth:760, margin:"0 auto", padding:"0 0 80px" }}>
+              <div style={{ padding:"36px 24px 24px" }}>
+                <div style={{ fontSize:10, letterSpacing:"0.18em", textTransform:"uppercase", color:T.inkFaint, marginBottom:8 }}>
+                  {SECTIONS.findIndex(s=>s.id===activeSection)+1} / {SECTIONS.length}
+                </div>
+                <div style={{ fontFamily:"Georgia,serif", fontSize:32, fontWeight:700, color:currentSection.color, marginBottom:6 }}>{currentSection.emoji} {currentSection.label}</div>
+                <div style={{ fontSize:12, color:T.inkMuted, background:T.badge, border:`1px solid ${T.creamBorder}`, borderRadius:4, display:"inline-block", padding:"4px 10px" }}>{currentSection.dates}</div>
+              </div>
+
+              {currentSection.coords && <SeasonalPanel section={currentSection} />}
+
+              {getMergedDays(currentSection).map(day => {
+                const dayForecast = forecast.byDate[day.date];
+                const fp = { forecast: dayForecast, forecastLoading: forecast.loading };
+                if (day.activityOptions && activeSection === "wengen") {
+                  if (day.id === "wengen-jun17") {
+                    return <DayCard key={day.id} day={day} color={currentSection.color} onEdit={setEditItem}
+                      activityKey={wengenActivity} onActivityChange={setWengenActivity} {...fp} />;
+                  }
+                  if (day.id === "wengen-jun18") {
+                    const matched = day.activityMatch?.[wengenActivity] || day.activityOptions[0].key;
+                    return <DayCard key={day.id} day={day} color={currentSection.color} onEdit={setEditItem}
+                      activityKey={matched} {...fp} />;
+                  }
+                }
+                return <DayCard key={day.id} day={day} color={currentSection.color} onEdit={setEditItem} {...fp} />;
+              })}
+            </div>
+          )}
+
+          {/* ── FAB ── */}
+          <div style={{ position:"fixed", bottom:24, right:24, zIndex:100, display:"flex", flexDirection:"column", alignItems:"flex-end", gap:8 }}>
+            {saving && <div style={{ background:T.savingBg, color:"#fff", fontSize:11, borderRadius:20, padding:"4px 12px" }}>Saving…</div>}
+            <button onClick={() => setShowAdd(true)} style={{ background:C.gold, color:"#fff", border:"none", borderRadius:28, padding:"13px 20px", fontSize:14, fontWeight:600, cursor:"pointer", boxShadow:"0 4px 16px rgba(201,168,76,0.4)", display:"flex", alignItems:"center", gap:8, fontFamily:"inherit" }}>
+              <span style={{ fontSize:18, lineHeight:1 }}>＋</span> Add Activity
+            </button>
+          </div>
+
+          {/* ── MODALS ── */}
+          {showAdd && <AddActivityModal sections={SECTIONS} onSave={handleAddActivity} onClose={() => setShowAdd(false)} />}
+          {editItem && (
+            <EditItemModal
+              item={editItem}
+              onSave={handleEditSave}
+              onReset={() => handleRestore(editItem)}
+              onClose={() => setEditItem(null)}
+            />
+          )}
         </div>
       )}
-
-      {/* ── FAB: ADD ACTIVITY ── */}
-      <div style={{ position:"fixed",bottom:24,right:24,zIndex:100,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:8 }}>
-        {saving && <div style={{ background:"rgba(0,0,0,0.7)",color:"#fff",fontSize:11,borderRadius:20,padding:"4px 12px" }}>Saving…</div>}
-        <button onClick={() => setShowAdd(true)} style={{ background:C.gold,color:"#fff",border:"none",borderRadius:28,padding:"13px 20px",fontSize:14,fontWeight:600,cursor:"pointer",boxShadow:"0 4px 16px rgba(201,168,76,0.4)",display:"flex",alignItems:"center",gap:8,fontFamily:"inherit" }}>
-          <span style={{ fontSize:18,lineHeight:1 }}>＋</span> Add Activity
-        </button>
-      </div>
-
-      {/* ── MODALS ── */}
-      {showAdd && <AddActivityModal sections={SECTIONS} onSave={handleAddActivity} onClose={() => setShowAdd(false)} />}
-      {editItem && (
-        <EditItemModal
-          item={editItem}
-          onSave={handleEditSave}
-          onReset={() => handleRestore(editItem)}
-          onClose={() => setEditItem(null)}
-        />
-      )}
-    </div>
+    </ThemeCtx.Provider>
   );
 }
